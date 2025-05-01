@@ -19,10 +19,16 @@ A Python-based VTuber AI bot that can interact via voice and Twitch chat. This b
 pip install -r requirements.txt
 ```
 
-2. **Configure the bot**:
+2. **Set up FFmpeg**:
+The bot requires FFmpeg for audio processing. Run the setup script to download and configure FFmpeg:
+```bash
+python setup_ffmpeg.py
+```
+
+3. **Configure the bot**:
 Create a `.env` file with your configuration (see Configuration section below)
 
-3. **Run the bot**:
+4. **Run the bot**:
 ```bash
 python main.py
 ```
