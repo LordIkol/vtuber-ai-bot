@@ -1,0 +1,10 @@
+openai
+sounddevice
+numpy
+pyaudio
+twitchio
+websockets
+python-dotenv
+requests
+keyboard
+pydub

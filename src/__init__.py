@@ -1,0 +1,3 @@
+"""
+VTuber AI Bot package.
+"""
