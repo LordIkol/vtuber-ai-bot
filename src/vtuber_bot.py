@@ -253,38 +253,23 @@ class VTuberBot:
     
     async def run(self):
         """Run the main event loop."""
-        # Start audio stream with microphone selection
-        print("\nSetting up microphone for voice input:")
-        audio_success = self.audio_manager.start_audio_stream()
-        
-        if not audio_success:
-            print("\nWARNING: Failed to start audio stream. Voice input will not be available.")
-            print("The bot will still respond to Twitch chat commands.")
-            proceed = input("\nDo you want to continue without voice input? (y/n): ")
-            if proceed.lower() != 'y':
-                print("Exiting...")
-                return
+        # Start audio stream with configured microphone device
+        logger.info("Setting up microphone for voice input")
+        if not self.audio_manager.start_audio_stream():
+            logger.error("Failed to start audio stream")
+            print("\nFailed to start audio stream. Please check your microphone settings and try again.")
+            return
         
         # Set up hotkey listener if in hotkey mode
         if self.audio_manager.hotkey_mode:
-            print("\nConfiguring hotkey for voice recording:")
-            hotkey = input(f"Enter hotkey to use for recording (default: {self.audio_manager.recording_hotkey}): ").strip()
-            if hotkey:
-                self.audio_manager.recording_hotkey = hotkey
+            logger.info(f"Using recording hotkey: {self.audio_manager.recording_hotkey}")
             self.audio_manager.setup_hotkey_listener()
         
-        print("\n===== VTuber AI Bot is running! =====")
-        print("- Speak into your microphone to interact with the bot")
-        print(f"- Use '{self.config.ai_command_prefix} <message>' in Twitch chat to get responses")
-        print("- Type 'volume <level>' to adjust TTS volume (e.g., 'volume 0.8')")
-        print("- Type 'help' to see all available commands")
-        print("- Press Ctrl+C to exit")
-        
-        # Log message queue status
-        if self.config.enable_message_queue:
-            print(f"- Message queue enabled (max size: {self.config.max_queue_size})")
-        
-        logger.info("VTuber AI Bot is running! Speak into your microphone or use Twitch chat commands.")
+        logger.info("===== VTuber AI Bot is running! =====")
+        logger.info("- Speak into your microphone to interact with the bot")
+        logger.info("- Use '!AI <message>' in Twitch chat to get responses")
+        logger.info(f"- Message queue enabled (max size: {self.config.max_queue_size})")
+        logger.info("VTuber AI Bot is ready for interaction")
         
         # Set up command processing
         self.running = True

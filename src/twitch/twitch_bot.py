@@ -5,6 +5,7 @@ Twitch bot for the VTuber AI Bot.
 import os
 import logging
 import asyncio
+from typing import Optional, Any, Callable, Coroutine, Union
 from twitchio.ext import commands
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,15 @@ logger = logging.getLogger(__name__)
 class TwitchBot(commands.Bot):
     """Twitch bot for handling chat commands."""
     
-    def __init__(self, config, ai_client=None, tts_manager=None, message_queue=None, queue_processor_callback=None):
+    # Class variable to track command registration
+    _command_registered: bool = False
+    
+    def __init__(self, 
+                 config: Any,
+                 ai_client: Optional[Any] = None,
+                 tts_manager: Optional[Any] = None,
+                 message_queue: Optional[asyncio.Queue] = None,
+                 queue_processor_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None):
         """Initialize the Twitch bot.
         
         Args:
@@ -55,40 +64,109 @@ class TwitchBot(commands.Bot):
             logger.info("Using token authentication for Twitch")
         else:
             logger.warning("No token provided for Twitch authentication")
+            
+        # Initialize command name
+        self._command_name = None
     
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Initialize Twitch bot connection."""
         try:
             await self.connect()
             logger.info("Connected to Twitch chat")
         except Exception as e:
             logger.error(f"Failed to connect to Twitch: {e}")
+            raise  # Re-raise to let caller handle connection failures
     
-    # Get the command name from the config (without the ! prefix)
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        # This will be called when the bot is initialized
-        cls._command_name = None
+    async def event_ready(self) -> None:
+        """Event handler called when the bot is ready to process commands."""
+        # Only register command once
+        if not TwitchBot._command_registered:
+            # Extract the command name without the ! prefix
+            command_name = self.config.ai_command_prefix
+            if command_name.startswith('!'):
+                command_name = command_name[1:]
+            
+            # Store the command name for reference
+            self._command_name = command_name
+            
+            # Register the command dynamically with cooldown
+            cmd = commands.Command(
+                name=command_name,
+                func=self.ai_command,
+                aliases=[],
+                cooldown=commands.Cooldown(rate=1, per=5, bucket=commands.Bucket.user)  # 1 command per 5 seconds per user
+            )
+            self.add_command(cmd)
+            
+            # Mark command as registered
+            TwitchBot._command_registered = True
+            logger.info(f"AI command registered as: !{command_name}")
     
-    async def event_ready(self):
-        # Extract the command name without the ! prefix
-        command_name = self.config.ai_command_prefix
-        if command_name.startswith('!'):
-            command_name = command_name[1:]
+    async def _safe_send(self, ctx: commands.Context, message: str) -> None:
+        """Safely send a message to the Twitch chat.
         
-        # Store the command name for reference
-        self.__class__._command_name = command_name
+        Args:
+            ctx: The command context
+            message: The message to send
+        """
+        try:
+            await ctx.send(message)
+        except Exception as e:
+            logger.error(f"Failed to send message to Twitch chat: {e}")
+
+    async def _process_queued_message(self, ctx: commands.Context, prompt: str) -> None:
+        """Process a message through the queue system.
         
-        # Register the command dynamically
-        self.add_command(commands.Command(
-            name=command_name,
-            func=self.ai_command,
-            aliases=[]
-        ))
+        Args:
+            ctx: The command context
+            prompt: The user's prompt to process
+        """
+        message_item = {
+            'text': prompt,
+            'source': 'twitch',
+            'context': ctx
+        }
         
-        logger.info(f"AI command registered as: !{command_name}")
-    
-    async def ai_command(self, ctx):
+        try:
+            # Try to add to queue, don't block if queue is full
+            await asyncio.wait_for(self.message_queue.put(message_item), 0.1)
+            
+            # Start processing if callback is available
+            if self.queue_processor_callback:
+                asyncio.create_task(self.queue_processor_callback())
+                
+        except asyncio.TimeoutError:
+            logger.warning("Message queue is full, rejecting Twitch command")
+            await self._safe_send(ctx, self.config.queue_full_message)
+            
+        except Exception as e:
+            logger.error(f"Error adding to message queue: {e}")
+            await self._safe_send(ctx, "Sorry, I encountered an error processing your request.")
+
+    async def _process_immediate_message(self, ctx: commands.Context, prompt: str) -> None:
+        """Process a message immediately without queueing.
+        
+        Args:
+            ctx: The command context
+            prompt: The user's prompt to process
+        """
+        try:
+            response = await self.ai_client.generate_response(prompt)
+            
+            # Send chat response if enabled
+            if self.config.ai_chat_response:
+                await self._safe_send(ctx, response)
+            
+            # Speak response if TTS is available
+            if self.tts_manager:
+                await self.tts_manager.speak_response(response)
+                
+        except Exception as e:
+            logger.error(f"Error generating AI response: {e}")
+            await self._safe_send(ctx, "Sorry, I encountered an error generating a response.")
+
+    @commands.cooldown(rate=1, per=5, bucket=commands.Bucket.user)
+    async def ai_command(self, ctx: commands.Context) -> None:
         """Handle AI commands from Twitch chat."""
         try:
             # Extract the message content after the command
@@ -97,53 +175,38 @@ class TwitchBot(commands.Bot):
                 prompt = message[1]
                 logger.info(f"Received Twitch command: {prompt}")
                 
-                # Check if we're using the message queue system
+                # Process through queue if enabled
                 if self.message_queue and self.config.enable_message_queue:
-                    # Create message item for the queue
-                    message_item = {
-                        'text': prompt,
-                        'source': 'twitch',
-                        'context': ctx
-                    }
-                    
-                    try:
-                        # Try to add to queue, don't block if queue is full
-                        import asyncio
-                        await asyncio.wait_for(self.message_queue.put(message_item), 0.1)
-                        
-                        # Start processing if not already playing audio
-                        if self.queue_processor_callback:
-                            # Use the callback provided by VTuberBot
-                            asyncio.create_task(self.queue_processor_callback())
-                        
-                        # No longer sending acknowledgment message
-                            
-                    except asyncio.TimeoutError:
-                        # Queue is full, send rejection message
-                        logger.warning("Message queue is full, rejecting Twitch command")
-                        await ctx.send(self.config.queue_full_message)
-                        
-                    except Exception as e:
-                        logger.error(f"Error adding to message queue: {e}")
-                        await ctx.send("Sorry, I encountered an error processing your request.")
-                        
-                # Process immediately if not using queue
+                    await self._process_queued_message(ctx, prompt)
+                # Process immediately if queue is disabled
                 elif self.ai_client:
-                    response = await self.ai_client.generate_response(prompt)
-                    
-                    # Only send chat response if enabled in config
-                    if self.config.ai_chat_response:
-                        await ctx.send(response)
-                    
-                    # Speak the response if TTS is available
-                    if self.tts_manager:
-                        await self.tts_manager.speak_response(response)
+                    await self._process_immediate_message(ctx, prompt)
                 else:
-                    # Always send error messages regardless of setting
-                    await ctx.send("AI client not fully initialized yet.")
+                    await self._safe_send(ctx, "AI client not fully initialized yet.")
             else:
-                command_name = self.config.ai_command_prefix
-                await ctx.send(f"Please provide a message after {command_name}")
+                await self._safe_send(ctx, f"Please provide a message after {self.config.ai_command_prefix}")
+                
+        except commands.CommandOnCooldown as e:
+            await self._safe_send(ctx, f"Please wait {e.retry_after:.1f} seconds before using this command again.")
         except Exception as e:
             logger.error(f"Error processing Twitch command: {e}")
-            await ctx.send("Sorry, I encountered an error processing your request.")
+            await self._safe_send(ctx, "Sorry, I encountered an error processing your request.")
+
+    async def shutdown(self) -> None:
+        """Gracefully shut down the Twitch bot."""
+        try:
+            # Close the Twitch connection
+            await self.close()
+            logger.info("Twitch bot connection closed")
+            
+            # Clear any pending messages from the queue
+            if self.message_queue:
+                while not self.message_queue.empty():
+                    try:
+                        self.message_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                logger.info("Message queue cleared")
+                
+        except Exception as e:
+            logger.error(f"Error during Twitch bot shutdown: {e}")

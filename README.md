@@ -4,13 +4,15 @@ A Python-based VTuber AI bot that can interact via voice and Twitch chat. This b
 
 ## Features
 
+- **Modern Web UI**: Easy-to-use interface built with NiceGUI for controlling all bot functions
 - **Voice Interaction**: Speak to your microphone and get AI-powered responses
-- **AI Chat**: Powered by OpenAI's GPT models
-- **High-Quality TTS**: Using ElevenLabs for natural-sounding voice
+- **AI Chat**: Powered by OpenAI's GPT models with optional Assistant API support
+- **Dual TTS Support**: Choose between ElevenLabs and Coqui TTS engines
 - **Twitch Integration**: Respond to chat commands with AI responses
 - **VTube Studio Integration**: Trigger avatar animations
-- **Hotkey Support**: Use keyboard shortcuts to control recording
-- **Configurable Settings**: Customize all aspects of the bot via .env file
+- **Hotkey Support**: Optional keyboard shortcuts to control recording
+- **Real-time Logs**: View bot activity and errors in real-time through the UI
+- **Message Queue**: Manage multiple requests with configurable queue size
 
 ## Setup
 
@@ -28,10 +30,11 @@ python setup_ffmpeg.py
 3. **Configure the bot**:
 Create a `.env` file with your configuration (see Configuration section below)
 
-4. **Run the bot**:
+4. **Start the UI**:
 ```bash
-python main.py
+python ui_main.py
 ```
+The UI will open in your default web browser at http://localhost:8080
 
 ## Configuration
 
@@ -72,7 +75,10 @@ SILENCE_THRESHOLD=300
 SILENCE_DURATION=2.0
 
 # TTS Configuration
+TTS_ENGINE=coqui
 TTS_VOLUME=1.0
+COQUI_MODEL=tts_models/en/ljspeech/tacotron2-DDC
+COQUI_VOCODER=vocoder_models/en/ljspeech/hifigan_v2
 ```
 
 ### Input Settings
@@ -86,12 +92,15 @@ RECORDING_HOTKEY=f9
 ```
 # AI Command Settings
 AI_COMMAND_PREFIX=!AI
-AI_CHAT_RESPONSE=true
+AI_CHAT_RESPONSE=false
+USE_ASSISTANT_API=false
+OPENAI_ASSISTANT_ID=your_assistant_id_here
+AI_SYSTEM_INSTRUCTIONS=You are a friendly and engaging VTuber AI assistant. Your responses should be concise, entertaining, and suitable for streaming platforms.
 
 # Message Queue Settings
 ENABLE_MESSAGE_QUEUE=true
-MAX_QUEUE_SIZE=10
-QUEUE_FULL_MESSAGE=I'm currently busy. Please try again later!
+MAX_QUEUE_SIZE=5
+QUEUE_FULL_MESSAGE=The message queue is full
 ```
 
 ### Logging
@@ -113,34 +122,39 @@ LOG_LEVEL=INFO
 - Example: `!AI Tell me a joke`
 - The bot will respond in chat and/or with voice based on your settings
 
-### Console Commands
-- `volume <level>` - Set TTS volume (0.1-2.0)
-- `chatresponse` - Toggle chat responses for AI commands on/off
-- `messagequeue` - Toggle message queue on/off
-- `queuesize <n>` - Set maximum message queue size (1-50)
-- `status` - Show current bot status
-- `exit` - Exit the bot
-- `help` - Show available commands
+### Web UI Features
+- **Settings Tab**: Configure all bot settings including API keys and audio options
+- **Logs Tab**: View real-time bot activity and error logs
+- **Controls**:
+  - Start/Stop Bot: Control the bot's operation
+  - TTS Volume Slider: Adjust speech volume in real-time
+  - TTS Engine Toggle: Switch between ElevenLabs and Coqui TTS
+  - Clear Logs: Clear the log display
+  - Shutdown: Safely stop the bot and close the UI
 
 ## Configuration Details
 
-### AI_CHAT_RESPONSE
-When set to `true`, the bot will respond to AI commands in Twitch chat with text. When set to `false`, the bot will only respond with voice (TTS) and not send text to the chat.
+### TTS Configuration
+- **TTS_ENGINE**: Choose between 'elevenlabs' or 'coqui' for text-to-speech
+- **TTS_VOLUME**: Controls volume (0.1-2.0, default: 1.0)
+- **COQUI_MODEL**: Coqui TTS model to use
+- **COQUI_VOCODER**: Coqui vocoder model for audio generation
 
-### TTS_VOLUME
-Controls the volume of the text-to-speech output. Values range from 0.1 (very quiet) to 2.0 (very loud). Default is 1.0.
+### AI Configuration
+- **AI_CHAT_RESPONSE**: Enable/disable text responses in Twitch chat
+- **USE_ASSISTANT_API**: Use OpenAI's Assistant API instead of Chat Completions
+- **OPENAI_ASSISTANT_ID**: Assistant ID when using Assistant API
+- **AI_SYSTEM_INSTRUCTIONS**: Custom personality/behavior instructions for the AI
 
-### HOTKEY_MODE
-When set to `true`, the bot will use a hotkey to start/stop recording. When set to `false`, the bot will use voice activity detection.
+### Input Configuration
+- **HOTKEY_MODE**: Use hotkey (true) or voice activity detection (false)
+- **RECORDING_HOTKEY**: Keyboard key to start/stop recording (when HOTKEY_MODE is true)
+- **MICROPHONE_DEVICE_ID**: Specific microphone to use (empty for default)
 
-### ENABLE_MESSAGE_QUEUE
-When set to `true`, the bot will process AI commands one at a time in a queue. This prevents multiple messages from playing simultaneously. When set to `false`, messages will be processed immediately as they arrive.
-
-### MAX_QUEUE_SIZE
-Sets the maximum number of messages that can be in the queue at once. When the queue is full, new messages will be rejected with the QUEUE_FULL_MESSAGE. Values range from 1 to 50.
-
-### QUEUE_FULL_MESSAGE
-The message sent to Twitch chat when the queue is full and a new command is received.
+### Message Queue
+- **ENABLE_MESSAGE_QUEUE**: Process messages sequentially to prevent overlap
+- **MAX_QUEUE_SIZE**: Maximum pending messages (1-50)
+- **QUEUE_FULL_MESSAGE**: Response when queue is full
 
 ## Requirements
 

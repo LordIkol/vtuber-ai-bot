@@ -76,17 +76,24 @@ class AudioManager:
         Returns:
             bool: True if successful, False otherwise
         """
-        # List available devices and ask for selection if not provided
+        # Use device ID from config if not explicitly provided
         if device_id is None:
-            input_devices = self.list_audio_devices()
-            if len(input_devices) > 1:
-                device_id = input("\nSelect input device ID (press Enter for default): ")
-                if device_id.strip():
-                    device_id = int(device_id)
-                else:
-                    device_id = None
-            elif len(input_devices) == 1:
-                print(f"\nUsing the only available input device: {input_devices[0][1]}")
+            device_id = self.config.microphone_device_id
+            
+        # List available devices for informational purposes
+        input_devices = self.list_audio_devices()
+        
+        # Show which device we're using
+        if device_id is not None:
+            # Find the device name if possible
+            device_name = "Unknown"
+            for dev_id, dev_name in input_devices:
+                if dev_id == device_id:
+                    device_name = dev_name
+                    break
+            logger.info(f"Using microphone device ID {device_id}: {device_name}")
+        else:
+            logger.info("Using default microphone device")
         
         # Open the audio stream with the selected device
         try:

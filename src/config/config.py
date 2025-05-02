@@ -17,6 +17,10 @@ class Config:
         self.elevenlabs_api_key = os.getenv('ELEVENLABS_API_KEY')
         self.elevenlabs_voice_id = os.getenv('ELEVENLABS_VOICE_ID')
         
+        # OpenAI Assistant API Configuration
+        self.use_assistant_api = os.getenv('USE_ASSISTANT_API', 'False').lower() == 'true'
+        self.openai_assistant_id = os.getenv('OPENAI_ASSISTANT_ID')
+        
         # Twitch Configuration
         self.twitch_client_id = os.getenv('TWITCH_CLIENT_ID')
         self.twitch_token = os.getenv('TWITCH_TOKEN')
@@ -36,11 +40,25 @@ class Config:
         self.silence_duration = float(os.getenv('SILENCE_DURATION', '2.0'))
         
         # TTS Configuration
+        self.tts_engine = os.getenv('TTS_ENGINE', 'elevenlabs').lower()  # 'elevenlabs' or 'coqui'
         self.tts_volume = float(os.getenv('TTS_VOLUME', '1.0'))
+        
+        # Coqui TTS Configuration
+        self.coqui_model = os.getenv('COQUI_MODEL', 'tts_models/en/ljspeech/tacotron2-DDC')
+        self.coqui_vocoder = os.getenv('COQUI_VOCODER', 'vocoder_models/en/ljspeech/hifigan_v2')
         
         # Input Configuration
         self.hotkey_mode = os.getenv('HOTKEY_MODE', 'True').lower() == 'true'
         self.recording_hotkey = os.getenv('RECORDING_HOTKEY', 'f9')
+        self.microphone_device_id = os.getenv('MICROPHONE_DEVICE_ID', '')
+        # Convert to int if provided, otherwise None
+        if self.microphone_device_id.strip():
+            try:
+                self.microphone_device_id = int(self.microphone_device_id)
+            except ValueError:
+                self.microphone_device_id = None
+        else:
+            self.microphone_device_id = None
         
         # Logging Configuration
         self.log_file = os.getenv('LOG_FILE', 'vtuber_bot.log')
@@ -49,6 +67,15 @@ class Config:
         # AI Command Settings
         self.ai_command_prefix = os.getenv('AI_COMMAND_PREFIX', '!Fenris')
         self.ai_chat_response = os.getenv('AI_CHAT_RESPONSE', 'False').lower() == 'true'
+        
+        # AI System Instructions (for standard Chat Completions API)
+        default_instructions = """You are Fenris, a friendly and engaging VTuber AI assistant. 
+            Your responses should be concise, entertaining, and suitable for streaming platforms. 
+            Keep your responses under 2-3 sentences when possible. 
+            You can be playful and show personality, but always remain helpful and appropriate for all audiences. 
+            If asked about topics you don't have information on, be honest about your limitations.
+            Avoid overly technical language unless specifically asked for technical details."""
+        self.ai_system_instructions = os.getenv('AI_SYSTEM_INSTRUCTIONS', default_instructions)
         
         # Message Queue Settings
         self.enable_message_queue = os.getenv('ENABLE_MESSAGE_QUEUE', 'True').lower() == 'true'
@@ -61,6 +88,10 @@ class Config:
         
         if not self.openai_api_key:
             missing.append("OPENAI_API_KEY")
+            
+        # Check for Assistant API configuration if enabled
+        if self.use_assistant_api and not self.openai_assistant_id:
+            missing.append("OPENAI_ASSISTANT_ID (required when USE_ASSISTANT_API is True)")
         
         if not self.elevenlabs_api_key:
             missing.append("ELEVENLABS_API_KEY")
