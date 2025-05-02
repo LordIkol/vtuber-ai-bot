@@ -61,6 +61,7 @@ root_logger = logging.getLogger()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 stream_handler = StringIOHandler(log_stream)
 stream_handler.setFormatter(formatter)
+stream_handler.setLevel(logging.WARNING)  # Only show WARNING and above in the UI
 root_logger.addHandler(stream_handler)
 
 # Also log to stdout
@@ -123,6 +124,7 @@ def load_env_settings():
             "CHUNK_SIZE": os.getenv("CHUNK_SIZE", "1024"),
             "SILENCE_THRESHOLD": os.getenv("SILENCE_THRESHOLD", "300"),
             "SILENCE_DURATION": os.getenv("SILENCE_DURATION", "2.0"),
+            "OUTPUT_DEVICE_ID": os.getenv("OUTPUT_DEVICE_ID", None),
         },
         "TTS": {
             "TTS_ENGINE": os.getenv("TTS_ENGINE", "elevenlabs"),
@@ -156,6 +158,35 @@ def load_env_settings():
     
     return settings
 
+def get_available_audio_devices():
+    """Get a list of available audio input and output devices."""
+    try:
+        p = pyaudio.PyAudio()
+        info = p.get_host_api_info_by_index(0)
+        numdevices = info.get('deviceCount')
+        
+        input_devices = []
+        output_devices = []
+        
+        for i in range(numdevices):
+            device_info = p.get_device_info_by_index(i)
+            if device_info.get('maxInputChannels', 0) > 0:  # Input devices
+                input_devices.append({
+                    'id': i,
+                    'name': device_info.get('name', f'Device {i}')
+                })
+            if device_info.get('maxOutputChannels', 0) > 0:  # Output devices
+                output_devices.append({
+                    'id': i,
+                    'name': device_info.get('name', f'Device {i}')
+                })
+        
+        p.terminate()
+        return input_devices, output_devices
+    except Exception as e:
+        logger.error(f"Error getting audio devices: {e}")
+        return [], []
+
 def get_available_microphones():
     """Get a list of available microphone devices."""
     try:
@@ -176,15 +207,65 @@ def get_available_microphones():
         logger.error(f"Error getting microphone devices: {e}")
         return []
 
-def save_env_settings(settings):
-    """Save settings to .env file."""
+async def show_audio_devices():
+    """Show dialog with audio device selection."""
     try:
-        # Flatten the settings dictionary
-        flat_settings = {}
-        for category, category_settings in settings.items():
-            for key, value in category_settings.items():
-                flat_settings[key] = value
+        # Get audio devices
+        import sounddevice as sd
+        devices = sd.query_devices()
+        input_devices = [(i, device['name']) for i, device in enumerate(devices) if device['max_input_channels'] > 0]
+        output_devices = [(i, device['name']) for i, device in enumerate(devices) if device['max_output_channels'] > 0]
         
+        # Create dialog
+        with ui.dialog() as dialog, ui.card().classes('w-160'):
+            ui.label('Audio Device Selection').classes('text-h6 q-pb-md')
+            
+            # Input devices
+            ui.label('Input Devices:').classes('text-subtitle1 q-pb-sm')
+            for idx, name in input_devices:
+                with ui.row().classes('w-full items-center'):
+                    ui.label(f'{name}').classes('text-caption flex-grow')
+                    ui.button('Select', on_click=lambda i=idx: select_input_device(i, dialog)).props('flat color=primary size=sm')
+            
+            ui.separator()
+            
+            # Output devices
+            ui.label('Output Devices:').classes('text-subtitle1 q-pb-sm q-pt-md')
+            for idx, name in output_devices:
+                with ui.row().classes('w-full items-center'):
+                    ui.label(f'{name}').classes('text-caption flex-grow')
+                    ui.button('Select', on_click=lambda i=idx: select_output_device(i, dialog)).props('flat color=primary size=sm')
+            
+            ui.button('Close', on_click=dialog.close).props('color=primary').classes('q-mt-lg')
+        
+        dialog.open()
+    except Exception as e:
+        logger.error(f'Error showing audio devices: {e}')
+        ui.notify(f'Error showing audio devices: {e}', type='negative')
+
+def select_input_device(device_id, dialog):
+    """Select input device and save to settings."""
+    try:
+        save_env_settings({'AUDIO': {'INPUT_DEVICE_ID': str(device_id)}})
+        ui.notify(f'Input device {device_id} selected', type='positive')
+        dialog.close()
+    except Exception as e:
+        logger.error(f'Error selecting input device: {e}')
+        ui.notify(f'Error selecting input device: {e}', type='negative')
+
+def select_output_device(device_id, dialog):
+    """Select output device and save to settings."""
+    try:
+        save_env_settings({'AUDIO': {'OUTPUT_DEVICE_ID': str(device_id)}})
+        ui.notify(f'Output device {device_id} selected', type='positive')
+        dialog.close()
+    except Exception as e:
+        logger.error(f'Error selecting output device: {e}')
+        ui.notify(f'Error selecting output device: {e}', type='negative')
+
+def save_env_settings(settings):
+    """Save settings to .env file by updating only the specified values without adding quotes."""
+    try:
         # Create a backup of the .env file
         env_path = Path(ENV_PATH)
         if env_path.exists():
@@ -194,15 +275,49 @@ def save_env_settings(settings):
             with open(backup_path, 'w') as f:
                 f.write(original_content)
         
-        # Write settings to .env file without quotes
+        # Flatten the settings dictionary for easier access
+        flat_settings = {}
+        for category, category_settings in settings.items():
+            for key, value in category_settings.items():
+                flat_settings[key] = value
+        
+        # Read existing .env file
+        env_lines = []
+        existing_keys = set()
+        if os.path.exists(ENV_PATH):
+            with open(ENV_PATH, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        env_lines.append(line)
+                        continue
+                    
+                    if '=' in line:
+                        key, _ = line.split('=', 1)
+                        key = key.strip()
+                        existing_keys.add(key)
+                        
+                        # If this key is being updated, replace it
+                        if key in flat_settings:
+                            env_lines.append(f"{key}={flat_settings[key]}")
+                            logger.info(f"Updating setting: {key}={flat_settings[key]}")
+                            flat_settings.pop(key)  # Remove from dict to track what's been processed
+                        else:
+                            env_lines.append(line)
+        
+        # Add any new settings that weren't in the file
+        for key, value in flat_settings.items():
+            logger.info(f"Adding new setting: {key}={value}")
+            env_lines.append(f"{key}={value}")
+        
+        # Write back to .env file
         with open(ENV_PATH, 'w') as f:
-            for key, value in flat_settings.items():
-                f.write(f"{key}={value}\n")
+            f.write('\n'.join(env_lines) + '\n')
         
         # Reload environment variables
         load_dotenv(ENV_PATH, override=True)
         
-        logger.info("Settings saved to .env file")
+        logger.info("Settings updated in .env file")
         return True
     except Exception as e:
         logger.error(f"Error saving settings: {e}")
@@ -278,7 +393,55 @@ async def list_microphones(input_elements):
                     input_elements['MICROPHONE_DEVICE_ID'].value = str(mic_id)
                     dialog.close()
                 ui.button(f"Use ID {mic_id}", on_click=use_mic).props('color=primary size=sm')
-        ui.button('Close', on_click=dialog.close).props('color=secondary')
+        with ui.row().classes('w-full justify-end'):
+            ui.button('Close', on_click=dialog.close).props('color=primary')
+        dialog.open()
+
+@ui.refreshable
+def audio_device_dialog():
+    """Create and show the audio device selection dialog."""
+    # Get available devices
+    input_devices, output_devices = get_available_audio_devices()
+    
+    with ui.dialog() as dialog, ui.card():
+        ui.label('Audio Device Selection').classes('text-h6 mb-4')
+        
+        # Input device selection
+        ui.label('Input Device').classes(CSS_LABEL_SM)
+        mic_select = ui.select(
+            options=[{'value': str(dev['id']), 'label': dev['name']} for dev in input_devices],
+            value='',
+            label='Microphone'
+        ).classes(CSS_INPUT_FULL)
+        
+        # Output device selection
+        ui.label('Output Device').classes(CSS_LABEL_SM + ' mt-4')
+        output_select = ui.select(
+            options=[{'value': str(dev['id']), 'label': dev['name']} for dev in output_devices],
+            value='',
+            label='Speaker'
+        ).classes(CSS_INPUT_FULL)
+        
+        async def use_audio_device(device_type, device_id):
+            if device_type == 'input':
+                await save_env_settings({'INPUT_DEVICE_ID': device_id})
+            else:
+                await save_env_settings({'OUTPUT_DEVICE_ID': device_id})
+            ui.notify(f'{device_type.title()} device updated', type='positive')
+        
+        # Add event handlers
+        mic_select.on('update:model-value', lambda e: asyncio.create_task(use_audio_device('input', e.value)))
+        output_select.on('update:model-value', lambda e: asyncio.create_task(use_audio_device('output', e.value)))
+        
+        # Add close button
+        with ui.row().classes('w-full justify-end mt-4'):
+            ui.button('Close', on_click=dialog.close).props('color=primary')
+        
+        dialog.open()
+
+def show_audio_devices():
+    """Show the audio device selection dialog."""
+    audio_device_dialog.refresh()
 
 def create_input_field(key, value, input_elements):
     """Create an input field based on the key and value type."""
@@ -304,14 +467,14 @@ def create_input_field(key, value, input_elements):
                     ).props('flat').classes(CSS_BTN_GREEN if not is_elevenlabs else CSS_BTN_GRAY)
             ui.label('Select your preferred TTS engine').classes(CSS_LABEL_XS)
             input_elements[key] = tts_container
+    elif key in ['INPUT_DEVICE_ID', 'OUTPUT_DEVICE_ID']:
+        input_elements[key] = ui.input(value=value, placeholder=key).classes(CSS_INPUT_FULL)
     elif key == 'AI_SYSTEM_INSTRUCTIONS':
         input_elements[key] = ui.textarea(value=value, placeholder=key).classes(CSS_INPUT_FULL)
     elif 'API_KEY' in key or 'TOKEN' in key:
         input_elements[key] = ui.input(value=value, placeholder=key, password=True).classes(CSS_INPUT_FULL)
-    elif key == 'MICROPHONE_DEVICE_ID':
-        with ui.row().classes(CSS_ROW_FULL):
-            input_elements[key] = ui.input(value=value, placeholder=key).classes(CSS_INPUT_FULL)
-            ui.button('List Microphones', on_click=lambda: asyncio.create_task(list_microphones(input_elements))).props('color=primary size=sm')
+    elif key in ['MICROPHONE_DEVICE_ID', 'INPUT_DEVICE_ID', 'OUTPUT_DEVICE_ID']:
+        input_elements[key] = ui.input(value=value, placeholder=key).classes(CSS_INPUT_FULL)
     else:
         input_elements[key] = ui.input(value=value, placeholder=key).classes(CSS_INPUT_FULL)
 
@@ -386,21 +549,7 @@ def main_page():
                     status_label = ui.label('Status: Stopped').classes(CSS_LABEL_H6 + ' text-negative')
                     ui.space()
                     
-                    # Volume slider
-                    with ui.column().classes('items-center'):
-                        ui.label('TTS Volume').classes(CSS_LABEL_SM)
-                        volume_slider = ui.slider(min=0.0, max=1.0, step=0.1, value=float(os.getenv('TTS_VOLUME', '0.8')))
-                        
-                        async def on_volume_change(e):
-                            volume = volume_slider.value
-                            if bot_instance and hasattr(bot_instance, 'tts_manager'):
-                                bot_instance.tts_manager.volume = volume
-                                logger.info(f'TTS volume set to {volume}')
-                            set_key(ENV_PATH, 'TTS_VOLUME', str(volume))
-                        
-                        volume_slider.on('change', on_volume_change)
-                    
-                    ui.space()
+                    # Start/Stop button and handler
                     
                     # Start/Stop button and handler
                     async def toggle_bot():
@@ -463,6 +612,208 @@ def main_page():
                 
                 # Log display
                 log_display = ui.code('').classes('w-full h-96 overflow-auto')
+                
+                # Audio settings
+                with ui.expansion('Audio Settings', icon='mic').classes(CSS_GRID_FULL):
+                    with ui.column().classes('w-full gap-4'):
+                        # Volume control
+                        with ui.row().classes('w-full items-center gap-4'):
+                            ui.label('TTS Volume:').classes(CSS_LABEL_SM)
+                            volume_slider = ui.slider(min=0, max=2, value=float(settings['TTS']['TTS_VOLUME']), step=0.1)
+                            volume_label = ui.label(f'{float(settings["TTS"]["TTS_VOLUME"]):.1f}')
+                            
+                            async def on_volume_change(e):
+                                volume = float(e.args)
+                                volume_label.text = f'{volume:.1f}'
+                                save_env_settings({'TTS': {'TTS_VOLUME': str(volume)}})
+                                if bot_instance and hasattr(bot_instance, 'tts_manager'):
+                                    bot_instance.tts_manager.volume = volume
+                            
+                            volume_slider.on('change', on_volume_change)
+                        
+                        # Audio device selection
+                        with ui.column().classes('w-full gap-4'):
+                            ui.label('Audio Devices').classes(CSS_LABEL_H6)
+                            
+                            # Get audio devices using PyAudio for better device separation
+                            p = pyaudio.PyAudio()
+                            info = p.get_host_api_info_by_index(0)
+                            numdevices = info.get('deviceCount')
+                            
+                            # Properly separate input and output devices
+                            input_devices = []
+                            output_devices = []
+                            
+                            # Log the devices for debugging
+                            print("\nAvailable audio devices:")
+                            
+                            for i in range(numdevices):
+                                device_info = p.get_device_info_by_index(i)
+                                device_name = device_info.get('name', f'Device {i}')
+                                print(f"Device id {i} - {device_name} - In: {device_info.get('maxInputChannels')} Out: {device_info.get('maxOutputChannels')}")
+                                
+                                # Add to input devices if it has input channels
+                                if device_info.get('maxInputChannels', 0) > 0:
+                                    input_devices.append({
+                                        'value': str(i),
+                                        'label': f"Input Device id {i} - {device_name}"
+                                    })
+                                
+                                # Add to output devices if it has output channels
+                                if device_info.get('maxOutputChannels', 0) > 0:
+                                    output_devices.append({
+                                        'value': str(i),
+                                        'label': f"Output Device id {i} - {device_name}"
+                                    })
+                            
+                            p.terminate()
+                            
+                            # Ensure we have at least one device in each list
+                            if not input_devices:
+                                input_devices = [{'value': '0', 'label': 'Default Input Device'}]
+                            if not output_devices:
+                                output_devices = [{'value': '0', 'label': 'Default Output Device'}]
+                                
+                            # Log the separated devices
+                            print("\nFiltered input devices:")
+                            for device in input_devices:
+                                print(f"  {device['label']}")
+                                
+                            print("\nFiltered output devices:")
+                            for device in output_devices:
+                                print(f"  {device['label']}")
+                            
+                            # Input device select
+                            with ui.row().classes('w-full items-center gap-4'):
+                                ui.label('Input Device:').classes(CSS_LABEL_SM)
+                                
+                                # Create a simple list of device names for display
+                                input_names = [device['label'] for device in input_devices]
+                                input_values = [device['value'] for device in input_devices]
+                                
+                                # Default to first device or index 0
+                                default_input_idx = 0
+                                # Get the current microphone device ID from the Input section
+                                current_input_value = str(settings.get('Input', {}).get('MICROPHONE_DEVICE_ID', '0'))
+                                
+                                # Try to find the index of the current value
+                                try:
+                                    if current_input_value in input_values:
+                                        default_input_idx = input_values.index(current_input_value)
+                                except:
+                                    pass
+                                
+                                # Log for debugging
+                                print(f"Input devices: {input_names}")
+                                print(f"Input values: {input_values}")
+                                print(f"Default input index: {default_input_idx}")
+                                
+                                input_select = ui.select(
+                                    options=input_names,
+                                    value=input_names[default_input_idx] if input_names else None,
+                                    with_input=False,
+                                ).classes('flex-grow').props('outlined dense')
+                                
+                                async def on_input_change(e):
+                                    # The event is a complex object, print it for debugging
+                                    print(f"Input change event: {e}")
+                                    
+                                    try:
+                                        # Extract the value from the event object
+                                        if hasattr(e, 'args') and 'value' in e.args:
+                                            # If it's a numeric index
+                                            selected_idx = e.args['value']
+                                            if 0 <= selected_idx < len(input_values):
+                                                selected_value = input_values[selected_idx]
+                                                # Save to MICROPHONE_DEVICE_ID in the Input section
+                                                save_env_settings({'Input': {'MICROPHONE_DEVICE_ID': str(selected_value)}})
+                                                
+                                                # If bot is running, update the device dynamically
+                                                if bot_instance:
+                                                    # Create a task to update the input device
+                                                    asyncio.create_task(bot_instance.update_input_device(int(selected_value)))
+                                                    ui.notify(f'Microphone device updated to {selected_value} (applied immediately)', type='positive')
+                                                else:
+                                                    ui.notify(f'Microphone device updated to {selected_value} (will apply on next start)', type='positive')
+                                            else:
+                                                # If it's the actual value
+                                                save_env_settings({'Input': {'MICROPHONE_DEVICE_ID': str(selected_idx)}})
+                                                ui.notify(f'Microphone device updated to {selected_idx}', type='positive')
+                                        else:
+                                            # Fallback: try to use the event object directly
+                                            save_env_settings({'Input': {'MICROPHONE_DEVICE_ID': str(e)}})
+                                            ui.notify(f'Microphone device updated', type='positive')
+                                    except Exception as ex:
+                                        print(f"Error in input change: {ex}")
+                                        ui.notify(f'Error updating input device: {ex}', type='negative')
+                                
+                                input_select.on('update:model-value', on_input_change)
+                            
+                            # Output device select
+                            with ui.row().classes('w-full items-center gap-4'):
+                                ui.label('Output Device:').classes(CSS_LABEL_SM)
+                                
+                                # Create a simple list of device names for display
+                                output_names = [device['label'] for device in output_devices]
+                                output_values = [device['value'] for device in output_devices]
+                                
+                                # Default to first device or index 0
+                                default_output_idx = 0
+                                # Get the current output device ID from the Audio section
+                                current_output_value = str(settings.get('Audio', {}).get('OUTPUT_DEVICE_ID', '0'))
+                                
+                                # Try to find the index of the current value
+                                try:
+                                    if current_output_value in output_values:
+                                        default_output_idx = output_values.index(current_output_value)
+                                except:
+                                    pass
+                                
+                                # Log for debugging
+                                print(f"Output devices: {output_names}")
+                                print(f"Output values: {output_values}")
+                                print(f"Default output index: {default_output_idx}")
+                                
+                                output_select = ui.select(
+                                    options=output_names,
+                                    value=output_names[default_output_idx] if output_names else None,
+                                    with_input=False,
+                                ).classes('flex-grow').props('outlined dense')
+                                
+                                async def on_output_change(e):
+                                    # The event is a complex object, print it for debugging
+                                    print(f"Output change event: {e}")
+                                    
+                                    try:
+                                        # Extract the value from the event object
+                                        if hasattr(e, 'args') and 'value' in e.args:
+                                            # If it's a numeric index
+                                            selected_idx = e.args['value']
+                                            if 0 <= selected_idx < len(output_values):
+                                                selected_value = output_values[selected_idx]
+                                                # Save to the Audio section as OUTPUT_DEVICE_ID
+                                                save_env_settings({'Audio': {'OUTPUT_DEVICE_ID': str(selected_value)}})
+                                                
+                                                # If bot is running, update the device dynamically
+                                                if bot_instance:
+                                                    # Create a task to update the output device
+                                                    asyncio.create_task(bot_instance.update_output_device(int(selected_value)))
+                                                    ui.notify(f'Output device updated to {selected_value} (applied immediately)', type='positive')
+                                                else:
+                                                    ui.notify(f'Output device updated to {selected_value} (will apply on next start)', type='positive')
+                                            else:
+                                                # If it's the actual value
+                                                save_env_settings({'Audio': {'OUTPUT_DEVICE_ID': str(selected_idx)}})
+                                                ui.notify(f'Output device updated to {selected_idx}', type='positive')
+                                        else:
+                                            # Fallback: try to use the event object directly
+                                            save_env_settings({'Audio': {'OUTPUT_DEVICE_ID': str(e)}})
+                                            ui.notify(f'Output device updated', type='positive')
+                                    except Exception as ex:
+                                        print(f"Error in output change: {ex}")
+                                        ui.notify(f'Error updating output device: {ex}', type='negative')
+                                
+                                output_select.on('update:model-value', on_output_change)
                 
                 # Auto-refresh toggle
                 with ui.row().classes(CSS_ROW_FULL):

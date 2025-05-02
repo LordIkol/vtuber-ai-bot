@@ -40,6 +40,9 @@ class TTSManager:
         self.config = config
         self.tts_engine = config.tts_engine
         self.volume = float(config.tts_volume)
+        self.output_device_id = getattr(config, 'output_device_id', None)
+        if self.output_device_id is not None:
+            self.output_device_id = int(self.output_device_id)
         self.vtube_studio_client = vtube_studio_client
         
         # ElevenLabs specific settings
@@ -51,13 +54,19 @@ class TTSManager:
         self.coqui_vocoder = config.coqui_vocoder
         self.coqui_tts = None
         
-        # Initialize Coqui TTS if selected and available
-        if self.tts_engine == 'coqui':
-            success = self._init_coqui_tts()
-            if not success:
-                # Fall back to ElevenLabs if Coqui initialization fails
-                self.tts_engine = 'elevenlabs'
-                logger.info("Falling back to ElevenLabs TTS")
+        # Initialize TTS engines based on configuration
+        # If ElevenLabs is selected, we'll use it as primary
+        # If Coqui is selected, we'll still initialize ElevenLabs as a fallback
+        
+        # Initialize Coqui TTS if needed
+        self.coqui_available = False
+        if self.tts_engine == 'coqui' or COQUI_AVAILABLE:
+            self.coqui_available = self._init_coqui_tts()
+            
+        # Ensure we're using the right engine based on availability
+        if self.tts_engine == 'coqui' and not self.coqui_available:
+            self.tts_engine = 'elevenlabs'
+            logger.info("Coqui TTS not available, using ElevenLabs TTS")
         
         # State variables for audio playback
         self._is_playing = False
@@ -139,7 +148,12 @@ class TTSManager:
         
         # Use appropriate TTS engine
         if self.tts_engine == 'elevenlabs':
-            return await self._prepare_audio_elevenlabs(text)
+            result = await self._prepare_audio_elevenlabs(text)
+            # If ElevenLabs fails and Coqui is available, try Coqui as fallback
+            if result is None and self.coqui_available:
+                logger.info("ElevenLabs TTS failed, falling back to Coqui TTS")
+                return await self._prepare_audio_coqui(text)
+            return result
         elif self.tts_engine == 'coqui':
             return await self._prepare_audio_coqui(text)
         else:
@@ -199,9 +213,9 @@ class TTSManager:
         Returns:
             str: Filename of the generated audio file, or None if generation failed
         """
-        if not COQUI_AVAILABLE:
+        if not self.coqui_available:
             logger.error("Coqui TTS not available but was requested")
-            return await self._prepare_audio_elevenlabs(text)  # Fall back to ElevenLabs
+            return None  # Don't fall back to ElevenLabs here, let the caller handle it
         
         try:
             # Create a temporary file for the output
@@ -234,12 +248,10 @@ class TTSManager:
                 return temp_filename
             else:
                 logger.error("Coqui TTS failed to generate audio or timed out")
-                # Fall back to ElevenLabs if Coqui fails
-                return await self._prepare_audio_elevenlabs(text)
+                return None  # Don't fall back to ElevenLabs here, let the caller handle it
         except Exception as e:
             logger.error(f"Error in prepare_audio_coqui: {e}")
-            # Fall back to ElevenLabs
-            return await self._prepare_audio_elevenlabs(text)
+            return None  # Don't fall back to ElevenLabs here, let the caller handle it
     
 
     
@@ -272,45 +284,37 @@ class TTSManager:
             return False
     
     def _play_wav(self, filename: str) -> bool:
-        """Play a WAV file using PyAudio.
+        """Play a WAV file using PyAudio."""
+        wf = None
+        p = None
+        stream = None
         
-        Args:
-            filename: Path to the WAV file
-            
-        Returns:
-            bool: True if playback was successful, False if it failed
-        """
         try:
             # Open the WAV file
-            with wave.open(filename, 'rb') as wf:
-                # Create PyAudio instance for playback
-                p = pyaudio.PyAudio()
-                
-                # Open stream
-                stream = p.open(
-                    format=p.get_format_from_width(wf.getsampwidth()),
-                    channels=wf.getnchannels(),
-                    rate=wf.getframerate(),
-                    output=True
-                )
-                
-                # Read data in chunks and play
-                chunk_size = 1024
+            wf = wave.open(filename, 'rb')
+            p = pyaudio.PyAudio()
+            
+            # Open stream with optional output device
+            stream = p.open(
+                format=p.get_format_from_width(wf.getsampwidth()),
+                channels=wf.getnchannels(),
+                rate=wf.getframerate(),
+                output=True,
+                output_device_index=self.output_device_id if self.output_device_id is not None else None
+            )
+            
+            # Read data in chunks and play
+            chunk_size = 1024
+            data = wf.readframes(chunk_size)
+            
+            while len(data) > 0:
+                # Convert bytes to numpy array for volume adjustment
+                audio_data = np.frombuffer(data, dtype=np.int16)
+                # Apply volume
+                audio_data = (audio_data * self.volume).astype(np.int16)
+                # Convert back to bytes
+                stream.write(audio_data.tobytes())
                 data = wf.readframes(chunk_size)
-                
-                while len(data) > 0:
-                    # Convert bytes to numpy array for volume adjustment
-                    audio_data = np.frombuffer(data, dtype=np.int16)
-                    # Apply volume
-                    audio_data = (audio_data * self.volume).astype(np.int16)
-                    # Convert back to bytes
-                    stream.write(audio_data.tobytes())
-                    data = wf.readframes(chunk_size)
-                
-                # Clean up
-                stream.stop_stream()
-                stream.close()
-                p.terminate()
             
             logger.info("Audio playback complete")
             return True
@@ -318,6 +322,16 @@ class TTSManager:
         except Exception as e:
             logger.error(f"Error in WAV playback: {e}", exc_info=True)
             return False
+            
+        finally:
+            # Clean up resources
+            if stream is not None:
+                stream.stop_stream()
+                stream.close()
+            if p is not None:
+                p.terminate()
+            if wf is not None:
+                wf.close()
     
     def _init_coqui_tts(self) -> bool:
         """Initialize Coqui TTS if not already initialized.
@@ -359,6 +373,27 @@ class TTSManager:
         except Exception as e:
             logger.error(f"Error in fallback playback: {e}", exc_info=True)
     
+    @staticmethod
+    def list_output_devices() -> list[dict]:
+        """List all available output devices.
+
+        Returns:
+            List of dictionaries containing device info with 'id' and 'name' keys.
+        """
+        devices = []
+        p = pyaudio.PyAudio()
+        try:
+            for i in range(p.get_device_count()):
+                device_info = p.get_device_info_by_index(i)
+                if device_info.get('maxOutputChannels', 0) > 0:  # Only output devices
+                    devices.append({
+                        'id': i,
+                        'name': device_info.get('name', f'Device {i}')
+                    })
+            return devices
+        finally:
+            p.terminate()
+
     def _play_audio_thread(self, filename: str) -> None:
         """Play audio file in a separate thread.
         

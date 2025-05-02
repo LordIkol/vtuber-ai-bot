@@ -39,6 +39,17 @@ class Config:
         self.silence_threshold = int(os.getenv('SILENCE_THRESHOLD', '300'))
         self.silence_duration = float(os.getenv('SILENCE_DURATION', '2.0'))
         
+        # Audio device configuration
+        self.output_device_id = os.getenv('OUTPUT_DEVICE_ID', '')
+        # Convert to int if provided, otherwise None
+        if self.output_device_id.strip():
+            try:
+                self.output_device_id = int(self.output_device_id)
+            except ValueError:
+                self.output_device_id = None
+        else:
+            self.output_device_id = None
+        
         # TTS Configuration
         self.tts_engine = os.getenv('TTS_ENGINE', 'elevenlabs').lower()  # 'elevenlabs' or 'coqui'
         self.tts_volume = float(os.getenv('TTS_VOLUME', '1.0'))
