@@ -38,6 +38,18 @@ if exist .git (
     echo Updating repository...
     git pull
 ) else (
+    :: Check if directory is empty
+    dir /a /b | findstr "^" > nul
+    if %errorlevel% equ 0 (
+        echo.
+        echo WARNING: Directory is not empty. Creating a new directory...
+        cd ..
+        set INSTALL_DIR=%USERPROFILE%\VTuberAIBot_%RANDOM%
+        echo New installation directory: %INSTALL_DIR%
+        mkdir "%INSTALL_DIR%"
+        cd "%INSTALL_DIR%"
+    )
+    
     echo Cloning repository...
     git clone https://github.com/LordIkol/vtuber-ai-bot.git .
 )
@@ -58,12 +70,33 @@ python -m pip install --upgrade pip
 
 :: Install requirements
 echo Installing dependencies...
-pip install -r requirements.txt
+if exist requirements.txt (
+    pip install -r requirements.txt
+) else (
+    echo WARNING: requirements.txt not found. Installing essential packages...
+    pip install nicegui openai pyaudio sounddevice TTS python-dotenv
+)
 
 :: Create .env file from example if it doesn't exist
 if not exist .env (
     echo Creating .env file from example...
-    copy .env.example .env
+    if exist .env.example (
+        copy .env.example .env
+    ) else (
+        echo WARNING: .env.example not found. Creating a basic .env file...
+        echo # OpenAI Configuration > .env
+        echo OPENAI_API_KEY=your_api_key_here >> .env
+        echo >> .env
+        echo # Audio Configuration >> .env
+        echo SAMPLE_RATE=44100 >> .env
+        echo CHUNK_SIZE=1024 >> .env
+        echo SILENCE_THRESHOLD=300 >> .env
+        echo SILENCE_DURATION=2.0 >> .env
+        echo >> .env
+        echo # TTS Configuration >> .env
+        echo TTS_VOLUME=0.2 >> .env
+        echo TTS_ENGINE=coqui >> .env
+    )
     echo Please edit the .env file to configure your API keys and settings.
 )
 
@@ -83,7 +116,26 @@ echo ) >> start.bat
 
 :: Create desktop shortcut
 echo Creating desktop shortcut...
-powershell "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%USERPROFILE%\Desktop\VTuber AI Bot.lnk'); $Shortcut.TargetPath = '%INSTALL_DIR%\start.bat'; $Shortcut.WorkingDirectory = '%INSTALL_DIR%'; $Shortcut.Save()"
+
+:: Ensure the installation directory exists and is accessible
+if exist "%INSTALL_DIR%" (
+    :: Create the shortcut using PowerShell with error handling
+    powershell -Command "& {
+        try {
+            $WshShell = New-Object -ComObject WScript.Shell
+            $Shortcut = $WshShell.CreateShortcut('%USERPROFILE%\Desktop\VTuber AI Bot.lnk')
+            $Shortcut.TargetPath = '%INSTALL_DIR%\start.bat'
+            $Shortcut.WorkingDirectory = '%INSTALL_DIR%'
+            $Shortcut.Save()
+            Write-Host 'Desktop shortcut created successfully.'
+        } catch {
+            Write-Host 'Warning: Could not create desktop shortcut. You can still run start.bat from the installation directory.'
+        }
+    }"
+) else (
+    echo Warning: Could not create desktop shortcut. Installation directory not found.
+    echo You can still run start.bat from the installation directory.
+)
 
 echo.
 echo ===================================
