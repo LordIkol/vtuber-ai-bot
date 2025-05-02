@@ -7,13 +7,14 @@ import sys
 import time
 import json
 import asyncio
-import logging
 import pyaudio
 from dotenv import load_dotenv, set_key
 from pathlib import Path
-from io import StringIO
 from nicegui import ui, app, events
 from datetime import datetime
+
+# Import our custom logger
+from src.utils.logger import setup_logging, get_logger, get_log_stream, clear_log_stream, UI_INFO
 
 # Add the parent directory to the path so we can import from src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -35,39 +36,10 @@ CSS_ROW_FULL = 'w-full items-center'
 CSS_GRID_FULL = 'w-full'
 CSS_INPUT_FULL = 'w-full'
 
-# Configure logging
-logger = logging.getLogger(__name__)
-
-# Create a string IO for capturing logs
-log_stream = StringIO()
-
-# Create a custom handler that writes to our StringIO
-class StringIOHandler(logging.StreamHandler):
-    def __init__(self, stream=None):
-        super().__init__(stream)
-        self.stream = stream
-        
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            stream = self.stream
-            stream.write(msg + '\n')
-            stream.flush()
-        except Exception:
-            self.handleError(record)
-
-# Add our handler to the root logger
-root_logger = logging.getLogger()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-stream_handler = StringIOHandler(log_stream)
-stream_handler.setFormatter(formatter)
-stream_handler.setLevel(logging.WARNING)  # Only show WARNING and above in the UI
-root_logger.addHandler(stream_handler)
-
-# Also log to stdout
-stdout_handler = logging.StreamHandler(sys.stdout)
-stdout_handler.setFormatter(formatter)
-root_logger.addHandler(stdout_handler)
+# Set up logging with our custom logger
+setup_logging()
+logger = get_logger(__name__)
+log_stream = get_log_stream()
 
 # Path to the .env file
 ENV_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.env"))
@@ -329,6 +301,7 @@ async def run_bot():
         global bot_instance
         try:
             logger.info("Starting VTuber AI Bot...")
+            logger.ui_info("Starting VTuber AI Bot...")  # This will show in the UI
             
             # Create and initialize the bot
             config = Config()
@@ -343,6 +316,7 @@ async def run_bot():
             
             # Set the running flag
             await bot_state.start()
+            logger.ui_info("VTuber AI Bot is now running")  # This will show in the UI
             await bot_instance.run()
             
         except Exception as e:
@@ -350,6 +324,7 @@ async def run_bot():
         finally:
             await bot_state.stop()
             logger.info("Bot stopped")
+            logger.ui_info("VTuber AI Bot has been stopped")  # This will show in the UI
     
     # Create an asyncio task that runs in the background
     asyncio.create_task(bot_task())
@@ -360,12 +335,14 @@ async def stop_bot():
     """Stop the VTuber bot."""
     try:
         logger.info("Stopping VTuber AI Bot...")
+        logger.ui_info("Stopping VTuber AI Bot...")  # This will show in the UI
         if bot_instance:
             # Set the running flag to False to stop the bot's main loop
             bot_instance.running = False
             # Set our UI state
             await bot_state.stop()
             logger.info("Bot stopping - set running flag to False")
+            logger.ui_info("Bot is shutting down")  # This will show in the UI
         return True
     except Exception as e:
         logger.error(f"Error stopping bot: {e}")
@@ -392,7 +369,7 @@ async def list_microphones(input_elements):
                 def use_mic(mic_id=mic_id):
                     input_elements['MICROPHONE_DEVICE_ID'].value = str(mic_id)
                     dialog.close()
-                ui.button(f"Use ID {mic_id}", on_click=use_mic).props('color=primary size=sm')
+                ui.button(f"Use ID {mic_id}", on_click=use_mic).props('flat color=primary size=sm')
         with ui.row().classes('w-full justify-end'):
             ui.button('Close', on_click=dialog.close).props('color=primary')
         dialog.open()
@@ -482,6 +459,8 @@ def create_input_field(key, value, input_elements):
 @ui.page('/')
 def main_page():
     """Main NiceGUI UI page."""
+    # No special JavaScript needed anymore
+    
     # Load settings
     settings = load_env_settings()
     
@@ -572,8 +551,7 @@ def main_page():
                     
                     # Clear logs button
                     def clear_logs():
-                        log_stream.truncate(0)
-                        log_stream.seek(0)
+                        clear_log_stream()
                         log_display.content = ''
                         ui.notify('Logs cleared', type='info')
                     
@@ -825,8 +803,17 @@ def main_page():
                 async def update_logs():
                     while True:
                         if auto_refresh.value:
+                            # Get log content
                             log_content = log_stream.getvalue()
+                            
+                            # Always show latest messages at top by reversing the order
+                            log_lines = log_content.strip().split('\n')
+                            log_lines.reverse()
+                            log_content = '\n'.join(log_lines)
+                            
+                            # Update the log display content
                             log_display.content = log_content
+                        
                         await asyncio.sleep(refresh_rate.value)
                 
                 # Start the log update task

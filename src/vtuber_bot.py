@@ -6,10 +6,13 @@ import os
 import sys
 import time
 import asyncio
-import logging
-import keyboard
+import tempfile
 import threading
+from queue import Queue
 from datetime import datetime
+
+# Import our custom logger
+from src.utils.logger import get_logger, UI_INFO
 
 from .audio.audio_manager import AudioManager
 from .config.config import Config
@@ -19,7 +22,8 @@ from .vtube_studio.vtube_studio_client import VTubeStudioClient
 from .utils.ai_client import AIClient
 from .utils.speech_recognition import SpeechRecognition
 
-logger = logging.getLogger(__name__)
+# Configure logging with our custom logger
+logger = get_logger(__name__)
 
 
 class VTuberBot:
@@ -62,16 +66,19 @@ class VTuberBot:
         """Process transcribed speech and generate response."""
         try:
             logger.info(f"Speech input: {text}")
+            logger.ui_info(f"Speech input: {text}")  # This will show in the UI
 
             if self.config.enable_message_queue:
                 message_item = {'text': text, 'source': 'voice', 'context': None}
                 try:
                     await asyncio.wait_for(self.message_queue.put(message_item), 0.1)
                     logger.info(f"Added voice message to queue: {text}")
+                    logger.ui_info(f"Added to queue: {text}")  # This will show in the UI
                     if not self.is_playing_audio:
                         asyncio.create_task(self.process_next_message())
                 except asyncio.TimeoutError:
                     logger.warning("Message queue is full, voice input ignored")
+                    # Warning level already shows in UI
                     print("Message queue is full. Please wait for current messages to be processed.")
             else:
                 response = await self.ai_client.generate_response(text)
@@ -118,6 +125,7 @@ class VTuberBot:
                 context = message_item['context']
 
                 logger.info(f"Processing message from {source}: {text}")
+                logger.ui_info(f"Processing: {text}")  # This will show in the UI
 
                 if self.next_audio_file and self.next_audio_text == text:
                     logger.info("Using prefetched audio file")
@@ -175,6 +183,7 @@ class VTuberBot:
                 asyncio.create_task(self.process_next_message())
             else:
                 logger.info("No more messages in queue")
+                logger.ui_info("Queue empty - ready for new input")  # This will show in the UI
 
         except Exception as e:
             logger.error(f"Error in message processor: {e}")

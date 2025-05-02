@@ -6,8 +6,9 @@ import logging
 import asyncio
 from typing import Any, Optional
 from openai import AsyncOpenAI
+from src.utils.logger import get_logger, UI_INFO
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class AIClient:
     """Client for generating AI responses using OpenAI GPT and Assistant API."""
@@ -80,7 +81,8 @@ class AIClient:
         try:
             # Create a thread if we don't have one yet
             if not self.thread_created:
-                thread = self.client.beta.threads.create()
+                # Properly await the coroutine
+                thread = await self.client.beta.threads.create()
                 self.thread_id = thread.id
                 self.thread_created = True
                 logger.info(f"Created new assistant thread with ID: {self.thread_id}")
@@ -119,8 +121,10 @@ class AIClient:
                             if hasattr(message, 'content') and message.content:
                                 for content_item in message.content:
                                     if content_item.type == "text":
-                                        return content_item.text.value
-                            break
+                                        response_text = content_item.text.value
+                                        # Log the assistant response with our custom UI_INFO level
+                                        logger.ui_info(f"Assistant API Response: {response_text}")
+                                        return response_text
                     
                     # If we couldn't find a response, return a default message
                     return "I processed your request, but couldn't generate a proper response."
@@ -160,7 +164,14 @@ class AIClient:
                 {"role": "user", "content": prompt}
             ]
         )
-        return response.choices[0].message.content
+        
+        # Extract the response text
+        response_text = response.choices[0].message.content
+        
+        # Log the response with our custom UI_INFO level so it shows in the UI
+        logger.ui_info(f"AI Response: {response_text}")
+        
+        return response_text
     
     async def generate_fallback_response(self, prompt: str) -> str:
         """Generate a fallback response when OpenAI API is unavailable.

@@ -43,7 +43,7 @@ class SpeechRecognition:
                 logger.warning(f"Error removing temporary audio file: {e}")
             
             if transcription.text:
-                logger.info(f"Transcription: {transcription.text}")
+                logger.ui_info(f"Transcription: {transcription.text}")
                 return transcription.text
             else:
                 logger.warning("No transcription returned from Whisper API")
