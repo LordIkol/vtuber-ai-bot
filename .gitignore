@@ -49,3 +49,12 @@ Thumbs.db
 ffmpeg/
 ffmpeg.exe
 ffprobe.exe
+
+# Packaging files
+vtuber_bot.spec
+icon.ico
+create_icon.py
+installer.nsi
+build_installer.py
+LICENSE.txt
+*.spec
