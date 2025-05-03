@@ -15,14 +15,25 @@ if errorlevel 1 (
 )
 
 :: Check if Python is installed
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo Python is not installed. Please install Python 3.9 or higher from https://www.python.org/downloads/
-    echo Make sure to check "Add Python to PATH" during installation.
-    echo After installing Python, run this installer again.
+where python >nul 2>nul
+if %errorlevel% neq 0 (
+    echo ERROR: Python is not installed or not in PATH.
+    echo Please install Python from https://www.python.org/downloads/
+    echo and make sure to check "Add Python to PATH" during installation.
     pause
     exit /b 1
 )
+
+:: Check Python version for compatibility
+echo Checking Python version...
+for /f "tokens=*" %%a in ('python --version 2^>^&1') do set PYTHON_VERSION=%%a
+echo %PYTHON_VERSION%
+
+echo.
+echo NOTE: For best compatibility, Python 3.8-3.10 is recommended.
+echo If installation fails, consider installing Python 3.10 from:
+echo https://www.python.org/downloads/release/python-31011/
+echo.
 
 :: Create installation directory
 set "INSTALL_DIR=%USERPROFILE%\VTuberAIBot"
@@ -106,7 +117,24 @@ if exist requirements-minimal.txt (
     pip install -r requirements.txt
 ) else (
     echo WARNING: No requirements file found. Installing essential packages...
-    pip install nicegui openai pyaudio sounddevice TTS python-dotenv
+    pip install nicegui openai pyaudio sounddevice python-dotenv
+)
+
+:: Install TTS with fallback options
+echo.
+echo Installing TTS (Text-to-Speech) package...
+pip install TTS
+if %errorlevel% neq 0 (
+    echo TTS installation failed. Trying alternative approach...
+    pip install TTS --no-deps
+    if %errorlevel% neq 0 (
+        echo WARNING: Could not install TTS package. The application will use alternative TTS methods if available.
+        echo You may need to install TTS manually later: pip install TTS
+    ) else (
+        echo TTS installed with --no-deps flag. Some features may be limited.
+    )
+) else (
+    echo TTS installed successfully.
 )
 
 :: Create .env file from example if it doesn't exist
