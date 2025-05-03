@@ -30,9 +30,18 @@ for /f "tokens=*" %%a in ('python --version 2^>^&1') do set PYTHON_VERSION=%%a
 echo %PYTHON_VERSION%
 
 echo.
-echo NOTE: For best compatibility, Python 3.8-3.10 is recommended.
-echo If installation fails, consider installing Python 3.10 from:
+echo ===================================
+echo IMPORTANT: Python Version Notice
+echo ===================================
+echo For best compatibility, Python 3.8-3.10 is recommended.
+echo.
+echo If you're using Python 3.11+ and encounter installation errors,
+echo consider installing Python 3.10 from:
 echo https://www.python.org/downloads/release/python-31011/
+echo.
+echo You can continue with your current Python version, but some
+echo packages might not install correctly.
+echo ===================================
 echo.
 
 :: Create installation directory
@@ -120,16 +129,54 @@ if exist requirements-minimal.txt (
     pip install nicegui openai pyaudio sounddevice python-dotenv
 )
 
+:: Install packages one by one to avoid dependency conflicts
+echo.
+echo Installing packages one by one for better compatibility...
+
+:: Core packages first
+pip install nicegui
+pip install openai
+pip install python-dotenv
+
+:: Audio packages
+pip install pyaudio
+pip install sounddevice
+pip install soundfile
+pip install pydub
+
+:: Twitch integration
+pip install twitchio
+
+:: VTube Studio integration
+pip install websockets
+
+:: Utilities
+pip install requests
+pip install tqdm
+pip install keyboard
+pip install numpy
+
 :: Install TTS with fallback options
 echo.
 echo Installing TTS (Text-to-Speech) package...
+
+:: Try multiple approaches for TTS
+echo Attempting TTS installation method 1...
 pip install TTS
 if %errorlevel% neq 0 (
-    echo TTS installation failed. Trying alternative approach...
+    echo TTS installation method 1 failed. Trying method 2...
     pip install TTS --no-deps
     if %errorlevel% neq 0 (
-        echo WARNING: Could not install TTS package. The application will use alternative TTS methods if available.
-        echo You may need to install TTS manually later: pip install TTS
+        echo TTS installation method 2 failed. Trying method 3...
+        pip install git+https://github.com/coqui-ai/TTS
+        if %errorlevel% neq 0 (
+            echo WARNING: Could not install TTS package. The application will use alternative TTS methods if available.
+            echo You may need to install TTS manually later: pip install TTS
+            echo.
+            echo The application should still work with ElevenLabs TTS if you provide an API key.
+        ) else (
+            echo TTS installed from GitHub successfully.
+        )
     ) else (
         echo TTS installed with --no-deps flag. Some features may be limited.
     )
