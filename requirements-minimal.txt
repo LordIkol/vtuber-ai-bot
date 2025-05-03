@@ -7,15 +7,19 @@ python-dotenv
 pyaudio
 sounddevice
 soundfile
+pydub
+
+# Twitch integration
+twitchio
+
+# VTube Studio integration
+websockets
 
 # Utilities
 requests
 tqdm
 keyboard
-
-# Optional packages - will be installed if compatible
 numpy
-python-socketio
-python-engineio
 
 # TTS will be installed separately with fallback options
+TTS
